@@ -1,17 +1,29 @@
 const { expect } = require("chai");
 const { BigNumber } = require("ethers");
 const { ethers } = require("hardhat");
+const { time } = require('@openzeppelin/test-helpers');
 
 const hund_nanotokens = BigNumber.from(100000000000n);
 testERC20 = null;
 stake = null;
 
-function sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
+async function wait_year_and_collect_reward(expected_percent) {
+  time.increase(365 * 86400);
+  const signers = await ethers.getSigners();
+  //collect reward test
+  staker_prebalance = (await testERC20.balanceOf(signers[19].address));
+  collectReward = await stake.connect(signers[19]).collectReward(false);
+  await collectReward.wait();
+  staker = await stake.stakers(signers[19].address);
+  reward = Math.floor((staker.amount * expected_percent * 365 * 86400) / (365 * 86400 * 100)); //staker.amount * expected_percent% * 10 sec / (количество секунд в году * 100%)
+  current_balance = await testERC20.balanceOf(signers[19].address);
+  console.log(`Expexted reward: ${reward}. Actual reward: ${current_balance - staker_prebalance}`);
+  expect(parseInt(current_balance)).to.lessThan(+staker_prebalance + +reward + 300);
+  expect(parseInt(current_balance)).to.greaterThan(+staker_prebalance + +reward - 300);
 }
 
 describe("Deployment, transfering tokens, approvance and testing staking", function () {
-
+  
 
   it("Should deploy testERC20 token and Stake contract", async function () {
     const TestERC20 = await ethers.getContractFactory("testERC20");
@@ -21,18 +33,21 @@ describe("Deployment, transfering tokens, approvance and testing staking", funct
     console.log(`testERC20 address: ${testERC20.address}`);
     
     const Stake = await ethers.getContractFactory("Stake");
-    stake = await Stake.deploy(testERC20.address, 1, 2, 3, 4, 5); // 1% for Iron, 2% for bronze, 3% for silver and etc.
+    stake = await Stake.deploy(testERC20.address, [5, 4, 3, 2, 1], [100000, 10000, 1000, 100]); // 1% for Iron, 2% for bronze, 3% for silver and etc. Thresholds: 100000 for platinum, 10000 for gold, 1000 for silver and 100 for bronze.
     await stake.deployed();
 
     console.log(`Stake address: ${stake.address}`);
   });
 
 
-  it(`Should transfer 100 tokens to account and make approve for stake contract`, async function () {
+  it(`Should transfer 100 tokens to account and stake contract and make approve for stake contract`, async function () {
     const signers = await ethers.getSigners();
     
-    const send_tokens = await testERC20.transfer(signers[19].address, hund_nanotokens);
-    await send_tokens.wait();
+    const send_tokens_to_acc = await testERC20.transfer(signers[19].address, hund_nanotokens);
+    await send_tokens_to_acc.wait();
+
+    const send_tokens_to_contract = await testERC20.transfer(stake.address, hund_nanotokens);
+    await send_tokens_to_contract.wait();
 
     expect(await testERC20.balanceOf(signers[19].address)).to.equal(hund_nanotokens);
     const approve = await testERC20.connect(signers[19]).approve(stake.address, hund_nanotokens);
@@ -48,66 +63,67 @@ describe("Deployment, transfering tokens, approvance and testing staking", funct
     
 
     //deposit test
+    //iron
     const dep10 = await stake.connect(signers[19]).deposit(10);
     await dep10.wait();
     staker = await stake.stakers(signers[19].address);
-    expect(staker.level).to.equal(4); //Iron
+    await wait_year_and_collect_reward(1);
 
+    //bronze
     const dep100 = await stake.connect(signers[19]).deposit(100);
     await dep100.wait();
     staker = await stake.stakers(signers[19].address);
-    expect(staker.level).to.equal(3); //Bronze
+    await wait_year_and_collect_reward(2);
 
+
+    //silver
     const dep1000 = await stake.connect(signers[19]).deposit(1000);
     await dep1000.wait();
     staker = await stake.stakers(signers[19].address);
-    expect(staker.level).to.equal(2); //Silver
+    await wait_year_and_collect_reward(3);
 
+    //gold
     const dep10000 = await stake.connect(signers[19]).deposit(10000);
     await dep10000.wait();
     staker = await stake.stakers(signers[19].address);
-    expect(staker.level).to.equal(1); //Gold
+    await wait_year_and_collect_reward(4);
 
+    //platinum
     const dep100000 = await stake.connect(signers[19]).deposit(100000);
     await dep100000.wait();
+    await wait_year_and_collect_reward(5);
     staker = await stake.stakers(signers[19].address);
-    expect(staker.level).to.equal(0); //Platinum
+    expect(staker.amount).to.equal(10 + 100 + 1000 + 10000 + 100000);
 
+    //withdraw
+    staker_prebalance = (await testERC20.balanceOf(signers[19].address));
     const withdraw = await stake.connect(signers[19]).withdraw(staker.amount);
     await withdraw.wait();
-    expect(await testERC20.balanceOf(signers[19].address)).to.equal(hund_nanotokens); //reward is 0
+    expect(await testERC20.balanceOf(signers[19].address)).to.equal(+staker_prebalance + +staker.amount);
+
+    //check that amount is 0 after withdraw
+    staker = await stake.stakers(signers[19].address);
+    expect(staker.amount).to.equal(0);
 
     //change percent
-    const change_percent = await stake.changeRewardPercent(0, 10);
+    const change_percent = await stake.changeRewardPercent([10, 8, 6, 4, 2]);
     await change_percent.wait()
-    expect(await stake.level_reward(0)).to.equal(10);
-
-    const start = new Date().getTime();
-    const dep50nanotokens = await stake.connect(signers[19]).deposit(hund_nanotokens / 2);
-    await dep50nanotokens.wait();
+    expect(await stake.levelReward(0)).to.equal(10);
 
 
-    
-    await sleep(10000);
-    await network.provider.send("evm_mine")
+    //check after percent changing
+    const dep100000_after_percent = await stake.connect(signers[19]).deposit(100000);
+    await dep100000_after_percent.wait();
+    await wait_year_and_collect_reward(10); //now 10 percents for platinum
 
-  
-    //collect reward test
-    staker_prebalance = (await testERC20.balanceOf(signers[19].address));
-    console.log(staker_prebalance);
-    collectReward = await stake.connect(signers[19]).collectReward(false);
-    await collectReward.wait();
-    const end = new Date().getTime();
+
+
+    //change thresholds
     staker = await stake.stakers(signers[19].address);
-    reward = Math.floor((staker.amount * 10 * (end - start)) / (365 * 86400 * 100 * 1000));
-    current_balance = await testERC20.balanceOf(signers[19].address);
-    console.log(`Expexted reward: ${reward}. Actual reward: ${current_balance - staker_prebalance}`);
-    expect(parseInt(current_balance)).to.lessThan(+staker_prebalance + +reward + 250);
-    expect(parseInt(current_balance)).to.greaterThan(+staker_prebalance + +reward - 250);
-    //can't calculate actually reward because we can't know when deposit and collectReward has executed in blockchain
-
-
+    const change_thresholds = await stake.changeThresholds([100000000000, 10000, 1000, 100]); //чтобы level = gold
+    await change_thresholds.wait();
+    const dep100000_after_threshold = await stake.connect(signers[19]).deposit(100000);
+    await dep100000_after_threshold.wait();
+    await wait_year_and_collect_reward(8); //now staker must be gold and have 8 percents
   })
-
-
 });
