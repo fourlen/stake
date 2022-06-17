@@ -3,11 +3,15 @@ const hre = require("hardhat");
 
 const {
   AMOUNT,
-  IronPercent,
-  BronzePercent,
-  SilverPercent,
+  PlatinumPercent,
   GoldPercent,
-  PlatinumPercent
+  SilverPercent,
+  BronzePercent,
+  IronPercent,
+  PlatinumThreshold,
+  GoldThreshold,
+  SilverThreshold,
+  BronzeThreshold
 } = process.env;
 
 async function main() {
@@ -19,12 +23,7 @@ async function main() {
 
 
   const Stake = await hre.ethers.getContractFactory("Stake");
-  const stake = await Stake.deploy(testERC20.address,
-    IronPercent,
-    BronzePercent,
-    SilverPercent,
-    GoldPercent,
-    PlatinumPercent);
+  const stake = await Stake.deploy(testERC20.address, [PlatinumPercent, GoldPercent, SilverPercent, BronzePercent, IronPercent], [PlatinumThreshold, GoldThreshold, SilverThreshold, BronzeThreshold]);
   await stake.deployed();
   console.log("Stake deployed to: ", stake.address);
 
@@ -37,11 +36,7 @@ async function main() {
   }
   try {
     verifyStake(stake,
-        IronPercent,
-        BronzePercent,
-        SilverPercent,
-        GoldPercent,
-        PlatinumPercent);
+      testERC20.address, [PlatinumPercent, GoldPercent, SilverPercent, BronzePercent, IronPercent], [PlatinumThreshold, GoldThreshold, SilverThreshold, BronzeThreshold]);
     console.log("Verify stake success");
   }
   catch {
@@ -59,19 +54,15 @@ async function verifyTestERC20(testERC20, AMOUNT) {
 }
 
 async function verifyStake(stake,
-    IronPercent,
-    BronzePercent,
-    SilverPercent,
-    GoldPercent,
-    PlatinumPercent) {
+    stakedTokenAddress,
+    rewardPercent,
+    thresholds) {
   await hre.run("verify:verify", {
     address: stake.address,
     constructorArguments: [
-        IronPercent,
-        BronzePercent,
-        SilverPercent,
-        GoldPercent,
-        PlatinumPercent
+        stakedTokenAddress,
+        rewardPercent,
+        thresholds
     ]
   })
 }
