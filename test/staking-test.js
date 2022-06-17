@@ -18,8 +18,9 @@ async function wait_year_and_collect_reward(expected_percent) {
   reward = Math.floor((staker.amount * expected_percent * 365 * 86400) / (365 * 86400 * 100)); //staker.amount * expected_percent% * 10 sec / (количество секунд в году * 100%)
   current_balance = await testERC20.balanceOf(signers[19].address);
   console.log(`Expexted reward: ${reward}. Actual reward: ${current_balance - staker_prebalance}`);
-  expect(parseInt(current_balance)).to.lessThan(+staker_prebalance + +reward + 300);
-  expect(parseInt(current_balance)).to.greaterThan(+staker_prebalance + +reward - 300);
+  // expect(parseInt(current_balance)).to.lessThan(+staker_prebalance + +reward + 300);
+  // expect(parseInt(current_balance)).to.greaterThan(+staker_prebalance + +reward - 300);
+  expect(parseInt(current_balance)).to.equal(+staker_prebalance + +reward);
 }
 
 describe("Deployment, transfering tokens, approvance and testing staking", function () {
@@ -101,14 +102,15 @@ describe("Deployment, transfering tokens, approvance and testing staking", funct
     await withdraw.wait();
     expect(await testERC20.balanceOf(signers[19].address)).to.equal(+staker_prebalance + +staker.amount);
 
+
     //check that amount is 0 after withdraw
     staker = await stake.stakers(signers[19].address);
     expect(staker.amount).to.equal(0);
 
     //change percent
-    const change_percent = await stake.changeRewardPercent([10, 8, 6, 4, 2]);
+    const change_percent = await stake.changeLevelParameters([[10, 100000], [8, 10000], [6, 1000], [4, 100], [2, 0]]);
     await change_percent.wait()
-    expect(await stake.levelReward(0)).to.equal(10);
+    expect((await stake.levelInfos(0)).levelReward).to.equal(10);
 
 
     //check after percent changing
@@ -120,7 +122,7 @@ describe("Deployment, transfering tokens, approvance and testing staking", funct
 
     //change thresholds
     staker = await stake.stakers(signers[19].address);
-    const change_thresholds = await stake.changeThresholds([100000000000, 10000, 1000, 100]); //чтобы level = gold
+    const change_thresholds = await stake.changeLevelParameters([[10, 100000000000], [8, 10000], [6, 1000], [4, 100], [2, 0]]); //чтобы level = gold
     await change_thresholds.wait();
     const dep100000_after_threshold = await stake.connect(signers[19]).deposit(100000);
     await dep100000_after_threshold.wait();

@@ -2,17 +2,20 @@
 
 pragma solidity 0.8.15;
 
-import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "hardhat/console.sol";
 
 contract Stake is Ownable, ReentrancyGuard {
     IERC20Metadata public stakedToken;
 
-    mapping(Levels => uint256) public levelReward;
+    // mapping(Levels => uint256) public levelReward;
     mapping(address => Staker) public stakers;
-    mapping(Levels => uint256) public thresholds; //добавил массив порогов. С этого числа начинается уровень.
+    // mapping(Levels => uint256) public thresholds; //добавил массив порогов. С этого числа начинается уровень.
+
+    mapping(Levels => LevelInfo) public levelInfos;
 
     enum Levels {
         Platinum,
@@ -27,6 +30,11 @@ contract Stake is Ownable, ReentrancyGuard {
         uint256 lastCollectTimestamp;
     }
 
+    struct LevelInfo {
+        uint256 levelReward;
+        uint256 threshold;
+    }
+
     event Deposit(address indexed staker, uint256 amount);
     event RewardCollected(address indexed staker, uint256 reward);
     event RewardPercentChanged(uint256[5] rewardPercents);
@@ -39,75 +47,72 @@ contract Stake is Ownable, ReentrancyGuard {
         uint256[4] memory _thresholds //4, потому что для Iron всегда 0
     ) {
         stakedToken = _stakedToken;
-        thresholds[Levels(4)] = 0;
         for (uint8 i = 0; i < 5; i++) {
             require(rewardPercents[i] != 0, "Percent must be > 0");
-            levelReward[Levels(i)] = rewardPercents[i];
+            levelInfos[Levels(i)].levelReward = rewardPercents[i];
             if (i < 4) {
                 require(
-                    _thresholds[i] > thresholds[Levels(i + 1)],
-                    "Threshold must be greater than threashold of previous level"
+                    _thresholds[i] > levelInfos[Levels(i + 1)].threshold,
+                    "Threshold must be greater than threshold of previous level"
                 );
-                thresholds[Levels(i)] = _thresholds[i];
+                levelInfos[Levels(i)].threshold = _thresholds[i];
             }
         }
     }
 
     function deposit(uint256 _amount) external nonReentrant {
         //deposit
-        Staker storage staker = stakers[msg.sender];
+        address sender = _msgSender();
+        Staker storage staker = stakers[sender];
         require(_amount != 0, "Amount must be non-zero");
         _collectReward(true);
+        staker.amount += _amount;
         SafeERC20.safeTransferFrom(
             stakedToken,
-            msg.sender, //опустил пониже, но не ниже staker.amount +=, чтобы если транзакция завалилась, стекейру amount не прибавился
+            sender, //опустил пониже, но не ниже staker.amount +=, чтобы если транзакция завалилась, стекейру amount не прибавился
             address(this), //safeTransferFrom не возвращает bool, поэтому проеврку убрал
             _amount
         );
-        staker.amount += _amount;
-        emit Deposit(msg.sender, _amount);
+        emit Deposit(sender, _amount);
     }
 
     function withdraw(uint256 _amount) external nonReentrant {
-        Staker storage staker = stakers[msg.sender];
+        address sender = _msgSender();
+        Staker storage staker = stakers[sender];
         _collectReward(true);
         require(staker.amount >= _amount, "Not enough tokens");
-        bool result = stakedToken.transfer(msg.sender, _amount);
-        require(result, "Somthing goes wrong");
         staker.amount -= _amount;
         if (staker.amount == 0) {
-            delete stakers[msg.sender];
+            delete stakers[sender];
         }
+        SafeERC20.safeTransfer(stakedToken, sender, _amount);
     }
 
     function collectReward(bool is_redeposit) external nonReentrant {
         uint256 reward = _collectReward(is_redeposit);
-        emit RewardCollected(msg.sender, reward);
+        emit RewardCollected(_msgSender(), reward);
     }
 
-    function changeRewardPercent(uint256[5] memory rewardPercents)
+    function changeLevelParameters(LevelInfo[5] memory _levelInfos)
         external
         nonReentrant
         onlyOwner
     {
-        for (uint8 i = 0; i < rewardPercents.length; i++) {
-            require(rewardPercents[i] != 0, "Percent must be > 0");
-            levelReward[Levels(i)] = rewardPercents[i];
-        }
-        emit RewardPercentChanged(rewardPercents);
-    }
-
-    function changeThresholds(uint256[4] memory _thresholds)
-        external
-        nonReentrant
-        onlyOwner
-    {
-        for (uint8 i = 0; i < 4; i++) {
-            require(
-                _thresholds[i] > thresholds[Levels(i + 1)],
-                "Threshold must be greater than threashold of previous level"
-            );
-            thresholds[Levels(i)] = _thresholds[i];
+        require(
+            _levelInfos[4].threshold == 0,
+            "Threshold for Iron level must be 0"
+        );
+        for (uint8 i = 0; i < 5; i++) {
+            require(_levelInfos[i].levelReward != 0, "Percent must be > 0");
+            levelInfos[Levels(i)].levelReward = _levelInfos[i].levelReward;
+            if (i != 4) {
+                require(
+                    _levelInfos[i].threshold >
+                        levelInfos[Levels(i + 1)].threshold,
+                    "Threshold must be greater than threshold of previous level"
+                );
+            }
+            levelInfos[Levels(i)].threshold = _levelInfos[i].threshold;
         }
     }
 
@@ -116,24 +121,24 @@ contract Stake is Ownable, ReentrancyGuard {
         view
         returns (Levels level)
     {
-        if (_amount > 0 && _amount < 100) {
+        if (_amount > 0 && _amount < levelInfos[Levels.Bronze].threshold) {
             return Levels.Iron;
         } else if (
-            _amount >= thresholds[Levels.Bronze] &&
-            _amount < thresholds[Levels.Silver]
+            _amount >= levelInfos[Levels.Bronze].threshold &&
+            _amount < levelInfos[Levels.Silver].threshold
         ) {
             return Levels.Bronze;
         } else if (
-            _amount >= thresholds[Levels.Silver] &&
-            _amount < thresholds[Levels.Gold]
+            _amount >= levelInfos[Levels.Silver].threshold &&
+            _amount < levelInfos[Levels.Gold].threshold
         ) {
             return Levels.Silver;
         } else if (
-            _amount >= thresholds[Levels.Gold] &&
-            _amount < thresholds[Levels.Platinum]
+            _amount >= levelInfos[Levels.Gold].threshold &&
+            _amount < levelInfos[Levels.Platinum].threshold
         ) {
             return Levels.Gold;
-        } else if (_amount >= thresholds[Levels.Platinum]) {
+        } else if (_amount >= levelInfos[Levels.Platinum].threshold) {
             return Levels.Platinum;
         }
     }
@@ -145,24 +150,26 @@ contract Stake is Ownable, ReentrancyGuard {
     {
         return
             (staker.amount *
-                levelReward[calculateLevel(staker.amount)] *
+                levelInfos[calculateLevel(staker.amount)].levelReward *
                 (block.timestamp - staker.lastCollectTimestamp)) /
             (100 * 365 * 86400);
     }
 
     function _collectReward(bool is_redeposit) private returns (uint256) {
-        Staker storage staker = stakers[msg.sender];
+        uint256 blockTimestamp = block.timestamp;
+        address sender = _msgSender();
+        Staker storage staker = stakers[sender];
         if (staker.lastCollectTimestamp == 0) {
-            staker.lastCollectTimestamp = block.timestamp;
+            staker.lastCollectTimestamp = blockTimestamp;
             return 0;
         }
         uint256 reward = calculateReward(staker);
+        staker.lastCollectTimestamp = blockTimestamp;
         if (is_redeposit) {
             staker.amount += reward;
         } else {
-            stakedToken.transfer(msg.sender, reward);
+            SafeERC20.safeTransfer(stakedToken, sender, reward);
         }
-        staker.lastCollectTimestamp = block.timestamp;
         return reward;
     }
 }
