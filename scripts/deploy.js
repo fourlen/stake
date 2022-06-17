@@ -28,14 +28,14 @@ async function main() {
   console.log("Stake deployed to: ", stake.address);
 
   try {
-    verifyTestERC20(testERC20, AMOUNT);
+    await verifyTestERC20(testERC20, AMOUNT);
     console.log("Verify testERC20 succees");
   }
   catch {
     console.log("Verify testERC20 failed");
   }
   try {
-    verifyStake(stake,
+    await verifyStake(stake,
       testERC20.address, [PlatinumPercent, GoldPercent, SilverPercent, BronzePercent, IronPercent], [PlatinumThreshold, GoldThreshold, SilverThreshold, BronzeThreshold]);
     console.log("Verify stake success");
   }
