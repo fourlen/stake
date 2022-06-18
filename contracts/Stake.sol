@@ -11,9 +11,7 @@ import "hardhat/console.sol";
 contract Stake is Ownable, ReentrancyGuard {
     IERC20Metadata public stakedToken;
 
-    // mapping(Levels => uint256) public levelReward;
     mapping(address => Staker) public stakers;
-    // mapping(Levels => uint256) public thresholds; //добавил массив порогов. С этого числа начинается уровень.
 
     mapping(Levels => LevelInfo) public levelInfos;
 
